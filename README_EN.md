@@ -269,6 +269,9 @@ The project includes a TypeScript + React frontend and a FastAPI backend. The UI
 - `PDF upload`: upload a local PDF from the Library page. The backend renames it by paper title and immediately writes it into the vector database.
 - `Vectorization`: use Qwen3-Embedding-0.6B, set batch size, skip existing documents, rebuild the vector table, and watch task logs.
 - `Q&A`: ask questions, retrieve relevant chunks from pgvector, then call DeepSeek V4 for sourced answers.
+- `Agentic RAG`: orchestrate task classification, query rewriting, evidence retrieval, and answer generation with LangGraph. This creates a clean path for future literature review, paper comparison, and figure/formula retrieval workflows.
+- `Multimodal parsing`: optionally run local Qwen2.5-VL-3B-Instruct to convert paper figures, tables, formulas, and complex pages into searchable text chunks.
+- The multimodal script ranks candidate pages by figure/table/formula/experiment keywords and parses only the top 3 pages per paper by default, which keeps local VLM ingestion practical.
 
 Start it with:
 
@@ -324,3 +327,5 @@ Do not mix vectors from different embedding models in the same table. If you cha
 - `pypdf` works well for text-based PDFs. Scanned PDFs need OCR.
 - Qwen3-Embedding runs locally, so the full PDF text does not need to be sent to an online embedding API.
 - DeepSeek V4 receives only the retrieved passages, not the whole literature library.
+- Agentic RAG exposes the task type, rewritten retrieval query, and LangGraph execution steps in the UI.
+- Multimodal chunks are stored in `literature_multimodal_chunks` and can be merged with normal text chunks during retrieval.

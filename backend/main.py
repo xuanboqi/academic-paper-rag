@@ -20,6 +20,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pgvector.psycopg import register_vector
 from pydantic import BaseModel
 
+from backend.agent.graph import run_agentic_rag
+
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "scripts"
 if str(SCRIPTS) not in sys.path:
@@ -88,6 +90,15 @@ class AskRequest(BaseModel):
     deepseek_model: Optional[str] = None
 
 
+class AgentAskResponse(BaseModel):
+    answer: str
+    hits: list[dict[str, Any]]
+    model: str
+    task_type: str
+    rewritten_query: str
+    steps: list[str]
+
+
 class VectorizeRequest(BaseModel):
     quick_test: bool = False
     recreate: bool = False
@@ -147,6 +158,13 @@ def dsn() -> str:
     if not value:
         raise HTTPException(status_code=500, detail="POSTGRES_DSN is not configured")
     return value
+
+
+def env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
 def data_dir() -> Path:
@@ -313,12 +331,33 @@ def db_counts() -> dict[str, Any]:
             """
             SELECT
                 (SELECT count(*) FROM literature_documents) AS documents,
-                (SELECT count(*) FROM literature_chunks) AS chunks
+                (SELECT count(*) FROM literature_chunks) AS chunks,
+                (SELECT count(*) FROM literature_multimodal_chunks) AS multimodal_chunks
             """
         )
     except Exception:
-        return {"documents": 0, "chunks": 0, "connected": False}
-    return {"documents": int(rows[0]["documents"]), "chunks": int(rows[0]["chunks"]), "connected": True}
+        try:
+            rows = fetch_all(
+                """
+                SELECT
+                    (SELECT count(*) FROM literature_documents) AS documents,
+                    (SELECT count(*) FROM literature_chunks) AS chunks
+                """
+            )
+            return {
+                "documents": int(rows[0]["documents"]),
+                "chunks": int(rows[0]["chunks"]),
+                "multimodal_chunks": 0,
+                "connected": True,
+            }
+        except Exception:
+            return {"documents": 0, "chunks": 0, "multimodal_chunks": 0, "connected": False}
+    return {
+        "documents": int(rows[0]["documents"]),
+        "chunks": int(rows[0]["chunks"]),
+        "multimodal_chunks": int(rows[0]["multimodal_chunks"]),
+        "connected": True,
+    }
 
 
 @app.get("/api/health")
@@ -328,6 +367,7 @@ def health() -> dict[str, Any]:
         "database": "connected" if counts["connected"] else "unavailable",
         "documents": counts["documents"],
         "chunks": counts["chunks"],
+        "multimodal_chunks": counts["multimodal_chunks"],
         "embedding_model": os.getenv("EMBEDDING_MODEL"),
         "embedding_device": os.getenv("EMBEDDING_DEVICE", "auto"),
         "embedding_dimension": 1024,
@@ -354,9 +394,11 @@ def documents() -> dict[str, Any]:
                 d.file_sha256,
                 d.page_count,
                 d.created_at,
-                count(c.id)::int AS chunk_count
+                count(DISTINCT c.id)::int AS chunk_count,
+                count(DISTINCT m.id)::int AS multimodal_chunk_count
             FROM literature_documents d
             LEFT JOIN literature_chunks c ON c.document_id = d.id
+            LEFT JOIN literature_multimodal_chunks m ON m.document_id = d.id
             GROUP BY d.id
             ORDER BY d.filename
             """
@@ -385,6 +427,7 @@ def documents() -> dict[str, Any]:
                 "path": str(path),
                 "page_count": row["page_count"] if row else None,
                 "chunk_count": row["chunk_count"] if row else 0,
+                "multimodal_chunk_count": row["multimodal_chunk_count"] if row and "multimodal_chunk_count" in row else 0,
                 "created_at": str(row["created_at"]) if row else None,
                 "status": "indexed" if row and row["chunk_count"] else "pending",
                 "size_mb": round(path.stat().st_size / (1024 * 1024), 2),
@@ -401,6 +444,7 @@ def documents() -> dict[str, Any]:
                     "path": row["path"],
                     "page_count": row["page_count"],
                     "chunk_count": row["chunk_count"],
+                    "multimodal_chunk_count": row["multimodal_chunk_count"] if "multimodal_chunk_count" in row else 0,
                     "created_at": str(row["created_at"]),
                     "status": "missing-file",
                     "size_mb": None,
@@ -507,9 +551,13 @@ def ingest_task_status(task_id: str) -> IngestTaskResponse:
 
 
 def retrieve(query: str, top_k: int) -> list[dict[str, Any]]:
-    """Web 端复用的检索函数：问题 -> Qwen3 向量 -> pgvector top-k。"""
+    """Web 端复用的检索函数：问题 -> Qwen3 向量 -> pgvector top-k。
+
+    如果已经运行过多模态入库脚本，会同时检索正文 chunks 和图表/公式视觉解析 chunks。
+    """
     model = get_embedding_model()
     query_embedding = model.encode_query(query)
+    hits: list[dict[str, Any]] = []
     with connect() as conn:
         register_vector(conn)
         with conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
@@ -520,7 +568,8 @@ def retrieve(query: str, top_k: int) -> list[dict[str, Any]]:
                     c.page_start,
                     c.page_end,
                     c.text,
-                    1 - (c.embedding <=> %s::vector) AS score
+                    1 - (c.embedding <=> %s::vector) AS score,
+                    'text' AS source_type
                 FROM literature_chunks c
                 JOIN literature_documents d ON d.id = c.document_id
                 ORDER BY c.embedding <=> %s::vector
@@ -528,7 +577,30 @@ def retrieve(query: str, top_k: int) -> list[dict[str, Any]]:
                 """,
                 (query_embedding, query_embedding, top_k),
             )
-            return list(cur.fetchall())
+            hits.extend(list(cur.fetchall()))
+            if env_bool("INCLUDE_MULTIMODAL_RETRIEVAL", True):
+                try:
+                    cur.execute(
+                        """
+                        SELECT
+                            d.filename,
+                            m.page_number AS page_start,
+                            m.page_number AS page_end,
+                            m.text,
+                            1 - (m.embedding <=> %s::vector) AS score,
+                            'multimodal' AS source_type
+                        FROM literature_multimodal_chunks m
+                        JOIN literature_documents d ON d.id = m.document_id
+                        ORDER BY m.embedding <=> %s::vector
+                        LIMIT %s
+                        """,
+                        (query_embedding, query_embedding, top_k),
+                    )
+                    hits.extend(list(cur.fetchall()))
+                except psycopg.errors.UndefinedTable:
+                    conn.rollback()
+    hits.sort(key=lambda item: float(item["score"]), reverse=True)
+    return hits[:top_k]
 
 
 @app.post("/api/retrieval/search")
@@ -544,25 +616,44 @@ def build_context(hits: list[dict[str, Any]]) -> str:
     for index, hit in enumerate(hits, start=1):
         text = " ".join(hit["text"].split())
         blocks.append(
-            f"[{index}] filename={hit['filename']}, pages={hit['page_start']}-{hit['page_end']}, "
+            f"[{index}] type={hit.get('source_type', 'text')}, filename={hit['filename']}, pages={hit['page_start']}-{hit['page_end']}, "
             f"score={float(hit['score']):.4f}\n{text}"
         )
     return "\n\n".join(blocks)
+
+
+def chat_deepseek(messages: list[dict[str, str]], model: Optional[str] = None, temperature: float = 0.2) -> str:
+    """Call DeepSeek Chat Completions with a prepared message list."""
+    api_key = os.getenv("DEEPSEEK_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="DEEPSEEK_API_KEY is not configured")
+    base_url = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/")
+    selected_model = model or os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
+    payload = {
+        "model": selected_model,
+        "temperature": temperature,
+        "messages": messages,
+    }
+    with httpx.Client(timeout=120) as client:
+        response = client.post(
+            f"{base_url}/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json=payload,
+        )
+        response.raise_for_status()
+        data = response.json()
+    return data["choices"][0]["message"]["content"] or ""
 
 
 @app.post("/api/qa/ask")
 def ask(request: AskRequest) -> dict[str, Any]:
     """完整问答接口：先检索证据，再让 DeepSeek 基于证据生成答案。"""
     hits = retrieve(request.query, request.top_k)
-    api_key = os.getenv("DEEPSEEK_API_KEY")
-    if not api_key:
-        raise HTTPException(status_code=500, detail="DEEPSEEK_API_KEY is not configured")
-    base_url = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/")
     model = request.deepseek_model or os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
-    payload = {
-        "model": model,
-        "temperature": 0.2,
-        "messages": [
+    answer = chat_deepseek(
+        model=model,
+        temperature=0.2,
+        messages=[
             {
                 "role": "system",
                 "content": (
@@ -579,16 +670,40 @@ def ask(request: AskRequest) -> dict[str, Any]:
                 ),
             },
         ],
-    }
-    with httpx.Client(timeout=120) as client:
-        response = client.post(
-            f"{base_url}/chat/completions",
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            json=payload,
+    )
+    return {"answer": answer, "hits": hits, "model": model}
+
+
+@app.post("/api/agent/ask", response_model=AgentAskResponse)
+def agent_ask(request: AskRequest) -> AgentAskResponse:
+    """Agentic RAG: classify task -> rewrite query -> retrieve evidence -> generate answer."""
+    if not request.query.strip():
+        raise HTTPException(status_code=400, detail="Query is required")
+    model = request.deepseek_model or os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
+
+    def chat(messages: list[dict[str, str]], temperature: float) -> str:
+        return chat_deepseek(messages, model=model, temperature=temperature)
+
+    try:
+        state = run_agentic_rag(
+            query=request.query,
+            top_k=request.top_k,
+            chat=chat,
+            retrieve=retrieve,
+            build_context=build_context,
+            model=model,
         )
-        response.raise_for_status()
-        data = response.json()
-    return {"answer": data["choices"][0]["message"]["content"], "hits": hits, "model": model}
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    return AgentAskResponse(
+        answer=state.get("answer", ""),
+        hits=state.get("hits", []),
+        model=model,
+        task_type=state.get("task_type", "qa"),
+        rewritten_query=state.get("rewritten_query", request.query),
+        steps=state.get("steps", []),
+    )
 
 
 def run_vectorize(command: list[str]) -> None:

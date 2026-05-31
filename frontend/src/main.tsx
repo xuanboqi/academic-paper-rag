@@ -25,6 +25,7 @@ type Health = {
   database: string;
   documents: number;
   chunks: number;
+  multimodal_chunks: number;
   embedding_model: string;
   embedding_device: string;
   embedding_dimension: number;
@@ -39,6 +40,7 @@ type DocumentRow = {
   path: string;
   page_count: number | null;
   chunk_count: number;
+  multimodal_chunk_count: number;
   created_at: string | null;
   status: string;
   size_mb: number | null;
@@ -50,6 +52,16 @@ type Hit = {
   page_end: number;
   text: string;
   score: number;
+  source_type?: string;
+};
+
+type AgentAskResult = {
+  answer: string;
+  hits: Hit[];
+  model: string;
+  task_type: string;
+  rewritten_query: string;
+  steps: string[];
 };
 
 type VectorStatus = {
@@ -179,6 +191,7 @@ function StatusBar({ health, onRefresh }: { health: Health | null; onRefresh: ()
       <div className="status-pill"><Gauge size={16} /> {health?.embedding_device ?? "-"} {health?.embedding_dimension ?? "-"}d</div>
       <div className="status-pill"><Bot size={16} /> {health?.deepseek_model ?? "-"}</div>
       <div className="status-pill"><FileText size={16} /> {health?.documents ?? 0} docs / {health?.chunks ?? 0} chunks</div>
+      <div className="status-pill"><Layers size={16} /> {health?.multimodal_chunks ?? 0} multimodal</div>
       <button className="icon-button" onClick={onRefresh} title="刷新状态"><RefreshCw size={16} /></button>
     </header>
   );
@@ -225,12 +238,18 @@ function LibraryPage({ onRefreshHealth }: { onRefreshHealth: () => void }) {
     const indexed = documents.filter((doc) => doc.status === "indexed").length;
     const abnormal = documents.filter((doc) => doc.status === "indexed" && (!doc.page_count || !doc.chunk_count)).length;
     const seenIds = new Set<string>();
+    const seenMmIds = new Set<string>();
     const chunks = documents.reduce((sum, doc) => {
       if (!doc.id || seenIds.has(doc.id)) return sum;
       seenIds.add(doc.id);
       return sum + doc.chunk_count;
     }, 0);
-    return { indexed, abnormal, total: documents.length, chunks };
+    const multimodalChunks = documents.reduce((sum, doc) => {
+      if (!doc.id || seenMmIds.has(doc.id)) return sum;
+      seenMmIds.add(doc.id);
+      return sum + (doc.multimodal_chunk_count ?? 0);
+    }, 0);
+    return { indexed, abnormal, total: documents.length, chunks, multimodalChunks };
   }, [documents]);
 
   const sortedDocuments = useMemo(() => {
@@ -357,6 +376,7 @@ function LibraryPage({ onRefreshHealth }: { onRefreshHealth: () => void }) {
           <Metric label="PDF 总数" value={stats.total} />
           <Metric label="已入库" value={stats.indexed} />
           <Metric label="文本块" value={stats.chunks} />
+          <Metric label="多模态块" value={stats.multimodalChunks} />
           <Metric label="异常文献" value={stats.abnormal} tone={stats.abnormal ? "warn" : "ok"} />
         </div>
       </div>
@@ -395,6 +415,7 @@ function LibraryPage({ onRefreshHealth }: { onRefreshHealth: () => void }) {
               <SortableTh label="文件名" sortKey="filename" activeKey={sortKey} direction={sortDirection} onSort={setSort} />
               <SortableTh label="页数" sortKey="page_count" activeKey={sortKey} direction={sortDirection} onSort={setSort} />
               <SortableTh label="Chunks" sortKey="chunk_count" activeKey={sortKey} direction={sortDirection} onSort={setSort} />
+              <th>多模态</th>
               <SortableTh label="状态" sortKey="status" activeKey={sortKey} direction={sortDirection} onSort={setSort} />
               <SortableTh label="大小" sortKey="size_mb" activeKey={sortKey} direction={sortDirection} onSort={setSort} />
               <SortableTh label="导入时间" sortKey="created_at" activeKey={sortKey} direction={sortDirection} onSort={setSort} />
@@ -406,6 +427,7 @@ function LibraryPage({ onRefreshHealth }: { onRefreshHealth: () => void }) {
                 <td>{doc.filename}</td>
                 <td>{doc.page_count ?? "-"}</td>
                 <td>{doc.chunk_count}</td>
+                <td>{doc.multimodal_chunk_count ?? 0}</td>
                 <td><span className={`tag ${doc.status}`}>{doc.status}</span></td>
                 <td>{doc.size_mb ?? "-"} MB</td>
                 <td>{formatDateTime(doc.created_at)}</td>
@@ -567,10 +589,11 @@ function QAPage() {
   const [topK, setTopK] = useState(8);
   const [answer, setAnswer] = useState("");
   const [hits, setHits] = useState<Hit[]>([]);
+  const [agentResult, setAgentResult] = useState<AgentAskResult | null>(null);
   const [loading, setLoading] = useState(false);
-  const [mode, setMode] = useState<"search" | "ask">("ask");
+  const [mode, setMode] = useState<"search" | "ask" | "agent">("ask");
 
-  const run = async (nextMode: "search" | "ask") => {
+  const run = async (nextMode: "search" | "ask" | "agent") => {
     // “仅检索”只返回证据片段；“问答”会进一步调用 DeepSeek 生成答案。
     setMode(nextMode);
     setLoading(true);
@@ -579,10 +602,17 @@ function QAPage() {
         const data = await api.post<{ hits: Hit[] }>("/api/retrieval/search", { query, top_k: topK });
         setHits(data.hits);
         setAnswer("");
+        setAgentResult(null);
+      } else if (nextMode === "agent") {
+        const data = await api.post<AgentAskResult>("/api/agent/ask", { query, top_k: topK });
+        setAnswer(data.answer);
+        setHits(data.hits);
+        setAgentResult(data);
       } else {
         const data = await api.post<{ answer: string; hits: Hit[] }>("/api/qa/ask", { query, top_k: topK });
         setAnswer(data.answer);
         setHits(data.hits);
+        setAgentResult(null);
       }
     } finally {
       setLoading(false);
@@ -604,13 +634,21 @@ function QAPage() {
         <div className="button-row">
           <button className="secondary-button" onClick={() => run("search")} disabled={loading}><Search size={16} />仅检索</button>
           <button className="primary-button" onClick={() => run("ask")} disabled={loading}><Bot size={16} />问答</button>
+          <button className="primary-button agent-button" onClick={() => run("agent")} disabled={loading}><Settings2 size={16} />Agentic RAG</button>
         </div>
       </div>
       <div className="section answer-section">
         <div className="section-title">
-          <h2>{mode === "ask" ? "回答" : "检索结果"}</h2>
+          <h2>{mode === "search" ? "检索结果" : mode === "agent" ? "Agentic RAG 回答" : "回答"}</h2>
           {loading && <span className="tag running">running</span>}
         </div>
+        {agentResult && (
+          <div className="agent-trace">
+            <div><strong>任务类型</strong><span>{agentResult.task_type}</span></div>
+            <div><strong>改写查询</strong><span>{agentResult.rewritten_query}</span></div>
+            <div><strong>工作流</strong><span>{agentResult.steps.join(" -> ")}</span></div>
+          </div>
+        )}
         {answer ? <div className="answer">{answer}</div> : <p className="muted">输入问题后点击问答，答案会显示在这里。</p>}
       </div>
       <div className="section full">
@@ -620,7 +658,7 @@ function QAPage() {
             <article className="hit-card" key={`${hit.filename}-${index}`}>
               <div className="hit-head">
                 <strong>[{index + 1}] {hit.filename}</strong>
-                <span>{Number(hit.score).toFixed(4)}</span>
+                <span>{hit.source_type ?? "text"} · {Number(hit.score).toFixed(4)}</span>
               </div>
               <p className="muted">pp.{hit.page_start}-{hit.page_end}</p>
               <p>{hit.text.slice(0, 680)}</p>

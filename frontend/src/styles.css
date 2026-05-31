@@ -560,6 +560,11 @@ input[type="range"] {
   background: #2563eb;
 }
 
+.primary-button.agent-button {
+  border-color: #0f766e;
+  background: #0f766e;
+}
+
 .secondary-button {
   border: 1px solid #cbd5e1;
   color: #334155;
@@ -594,6 +599,32 @@ button:disabled {
 .answer {
   white-space: pre-wrap;
   line-height: 1.7;
+}
+
+.agent-trace {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 14px;
+  padding: 12px;
+  border: 1px solid #99f6e4;
+  border-radius: 8px;
+  background: #f0fdfa;
+}
+
+.agent-trace div {
+  display: grid;
+  grid-template-columns: 86px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.agent-trace strong {
+  color: #0f766e;
+}
+
+.agent-trace span {
+  color: #334155;
+  line-height: 1.5;
 }
 
 .hit-grid {
