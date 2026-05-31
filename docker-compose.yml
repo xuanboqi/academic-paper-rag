@@ -1,0 +1,23 @@
+services:
+  postgres:
+    # pgvector 镜像已经内置 vector 扩展，比普通 postgres 镜像更适合向量检索。
+    image: pgvector/pgvector:pg16
+    container_name: literature-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: literature_rag
+    ports:
+      # 本机用 15433 访问容器内 5432，避免和其他 PostgreSQL 冲突。
+      - "15433:5432"
+    volumes:
+      # 数据卷保证容器删除/重建后，数据库文件仍然保留。
+      - literature_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d literature_rag"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  literature_postgres_data:
