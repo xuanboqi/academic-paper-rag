@@ -1,12 +1,26 @@
-# Academic Paper RAG: Qwen3-Embedding + DeepSeek V4
+<h1 align="center">Academic Paper RAG</h1>
 
-[![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-Backend-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![React](https://img.shields.io/badge/React%20%2B%20TypeScript-Frontend-61DAFB?logo=react&logoColor=111827)](https://react.dev/)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL%20%2B%20pgvector-Vector%20DB-4169E1?logo=postgresql&logoColor=white)](https://github.com/pgvector/pgvector)
-[![License](https://img.shields.io/badge/License-No%20license-lightgrey)](#)
+<p align="center">
+  <strong>Qwen3-Embedding + DeepSeek V4 + PostgreSQL/pgvector</strong>
+</p>
 
-English | [中文文档](README_CN.md)
+<p align="center">
+  A local-first academic literature RAG system for PDF ingestion, vectorization, retrieval, and citation-grounded question answering.
+</p>
+
+<p align="center">
+  <a href="https://www.python.org/"><img alt="Python" src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white"></a>
+  <a href="https://fastapi.tiangolo.com/"><img alt="FastAPI" src="https://img.shields.io/badge/FastAPI-Backend-009688?logo=fastapi&logoColor=white"></a>
+  <a href="https://react.dev/"><img alt="React TypeScript" src="https://img.shields.io/badge/React%20%2B%20TypeScript-Frontend-61DAFB?logo=react&logoColor=111827"></a>
+  <a href="https://github.com/pgvector/pgvector"><img alt="pgvector" src="https://img.shields.io/badge/PostgreSQL%20%2B%20pgvector-Vector%20DB-4169E1?logo=postgresql&logoColor=white"></a>
+  <img alt="License" src="https://img.shields.io/badge/License-No%20license-lightgrey">
+</p>
+
+<p align="center">
+  English | <a href="README_CN.md">中文文档</a>
+</p>
+
+---
 
 This project builds a RAG pipeline for academic PDF literature.
 
