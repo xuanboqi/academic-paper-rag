@@ -1,5 +1,13 @@
 # Academic Paper RAG: Qwen3-Embedding + DeepSeek V4
 
+[![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-Backend-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![React](https://img.shields.io/badge/React%20%2B%20TypeScript-Frontend-61DAFB?logo=react&logoColor=111827)](https://react.dev/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL%20%2B%20pgvector-Vector%20DB-4169E1?logo=postgresql&logoColor=white)](https://github.com/pgvector/pgvector)
+[![License](https://img.shields.io/badge/License-No%20license-lightgrey)](#)
+
+English | [中文文档](README_CN.md)
+
 This project builds a RAG pipeline for academic PDF literature.
 
 The dataset directory is fixed to:

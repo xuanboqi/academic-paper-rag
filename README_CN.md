@@ -1,5 +1,13 @@
 # Academic Paper RAG：Qwen3-Embedding + DeepSeek V4
 
+[![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-后端-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![React](https://img.shields.io/badge/React%20%2B%20TypeScript-前端-61DAFB?logo=react&logoColor=111827)](https://react.dev/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL%20%2B%20pgvector-向量数据库-4169E1?logo=postgresql&logoColor=white)](https://github.com/pgvector/pgvector)
+[![License](https://img.shields.io/badge/License-No%20license-lightgrey)](#)
+
+[English](README.md) | 中文文档
+
 这个项目用于构建一个面向学术 PDF 文献的 RAG 系统。
 
 你的数据集目录就是：
